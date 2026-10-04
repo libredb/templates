@@ -8,7 +8,7 @@ LibreDB Studio 是一款开源数据库 IDE，可直接在浏览器中查询和�
 
 LibreDB Studio 将 Web 编辑器、Schema 浏览、结果查看、连接管理、监控页面和管理工具整合到一个应用中。默认部署使用 SQLite，将应用状态保存在 1 GiB 持久卷中。部署时也可以选择由 KubeBlocks 托管的独立 PostgreSQL 数据库，用于共享服务端状态。
 
-PostgreSQL 选项保存 LibreDB Studio 的连接配置、收藏查询等应用数据。需要查看和管理的业务数据库仍作为独立数据源，登录后可在 LibreDB Studio 界面中添加。
+PostgreSQL 选项保存 LibreDB Studio 的连接配置、收藏查询等应用数据。需要查看和管理的业务数据库仍作为独立数据源，登录后可在 LibreDB Studio 界面中添加。另一个选项可将 LibreDB Studio 连接到同一工作空间中由 Sealos 数据库应用创建的现有 PostgreSQL、MySQL、MongoDB 或 Redis 数据库，首次登录时该数据库已出现在连接列表中。
 
 ## 常见使用场景
 
@@ -16,6 +16,7 @@ PostgreSQL 选项保存 LibreDB Studio 的连接配置、收藏查询等应用�
 - **共享管理空间**：通过持久化服务端存储保留连接配置和收藏查询。
 - **开发与调试**：在同一界面中检查应用数据库并分析查询结果。
 - **自托管数据工具**：在自己的 Sealos 工作空间中运行 IDE，并获得自动生成的 HTTPS 地址。
+- **Sealos 数据库控制台**：直接打开在 Sealos 数据库应用中创建的数据库，无需把密码复制到表单中。
 
 ## LibreDB Studio 托管依赖
 
@@ -25,6 +26,7 @@ PostgreSQL 选项保存 LibreDB Studio 的连接配置、收藏查询等应用�
 - **默认 SQLite 存储**：`/app/data/libredb-storage.db`，使用 1 GiB 应用 PVC
 - **可选 PostgreSQL 存储**：KubeBlocks 托管的 `postgresql-16.4.0`，使用 1 GiB 数据 PVC
 - **HTTPS 入口**：通过 Sealos Service、Ingress 和 App 资源暴露 `3000` 端口
+- **可选的现有数据库连接**：一个包含单个 LibreDB Studio 预置连接的 ConfigMap，运行时从数据库的 KubeBlocks Secret 读取凭据
 
 ### 部署依赖链接
 
@@ -40,6 +42,7 @@ PostgreSQL 选项保存 LibreDB Studio 的连接配置、收藏查询等应用�
 - **LibreDB Studio StatefulSet**：运行一个应用副本；SQLite 模式将持久卷挂载到 `/app/data`。
 - **SQLite 模式**：默认选择，将服务端应用状态持久化到应用 PVC。
 - **PostgreSQL 模式**：创建 PostgreSQL 集群、数据库访问资源、`libredb_storage` 初始化 Job 和数据库就绪检查容器。
+- **现有数据库连接**：创建只包含 `${ENV}` 引用的预置连接 ConfigMap，以只读方式挂载到 `/app/config/seed-connections.yaml`，设置 `SEED_CONFIG_PATH`，并通过 `secretKeyRef` 从数据库 Secret 读取主机、用户名和密码。
 - **Service + Ingress + App**：将生成的 HTTPS 域名路由到应用，并打开 `/login` 页面。
 - **健康检查**：使用上游 `/api/db/health` 接口执行启动、就绪和存活探测。
 
@@ -50,6 +53,8 @@ Sealos 实测确认应用的稳定最低档位为 `100m` CPU 和 `128Mi` 内存�
 **安全默认值：**
 
 应用以非 root 用户运行，移除 Linux capabilities，关闭 ServiceAccount Token 挂载，并使用自动生成的 JWT 签名密钥。管理员账号来自必填的部署参数。
+
+现有数据库连接的密码保留在 Kubernetes Secret 中，ConfigMap 只保存变量名。该连接为托管连接：密码不会发送到浏览器，也无法在界面中修改。由于 Secret 中是数据库的 root 或超级用户账号，只有管理员角色可以看到该连接。
 
 ## 为什么在 Sealos 上部署 LibreDB Studio？
 
@@ -67,9 +72,10 @@ Sealos 将 Kubernetes 部署、网络、存储和可视化运维集中在同一�
 1. 打开 [LibreDB Studio 模板](https://sealos.io/products/app-store/libredb-studio)，点击 **Deploy Now**。
 2. 输入管理员邮箱和至少 8 位的密码。
 3. 默认关闭 **Use PostgreSQL storage**，应用将使用 SQLite；开启该选项会创建独立 PostgreSQL 后端。
-4. 等待部署完成，通常需要 2-3 分钟。PostgreSQL 模式会在数据库集群和初始化 Job 完成后进入就绪状态。
-5. 从 Canvas 应用卡片打开访问地址，系统会进入 `/login`。
-6. 使用部署时填写的管理员邮箱和密码登录。
+4. 如需打开现有 Sealos 数据库，在 **existing_database_type** 中选择数据库引擎，并在 **existing_database_name** 中填写数据库名称。保持 `none` 则稍后手动添加连接。
+5. 等待部署完成，通常需要 2-3 分钟。PostgreSQL 模式会在数据库集群和初始化 Job 完成后进入就绪状态。
+6. 从 Canvas 应用卡片打开访问地址，系统会进入 `/login`。
+7. 使用部署时填写的管理员邮箱和密码登录。
 
 ## 首次登录
 
@@ -78,7 +84,7 @@ Sealos 将 Kubernetes 部署、网络、存储和可视化运维集中在同一�
 1. 打开系统生成的应用地址。
 2. 在 `/login` 页面输入已配置的管理员邮箱和密码。
 3. 点击 **Sign In**，进入管理概览页。
-4. 选择 **Editor**，添加数据库连接并执行查询。
+4. 选择 **Editor** 执行查询。如果部署时选择了现有 Sealos 数据库，它会以 `<name> (Sealos)` 显示在列表首位并默认打开；否则请在 Editor 中添加数据库连接。
 
 建议将部署凭据保存到密码管理器。需要更换凭据时，可在 Canvas 中修改 LibreDB Studio StatefulSet 的环境变量，然后重启工作负载。
 
@@ -89,8 +95,21 @@ Sealos 将 Kubernetes 部署、网络、存储和可视化运维集中在同一�
 | `admin_email` | 登录页面使用的管理员邮箱 | 必填 | 部署时填写 |
 | `admin_password` | 管理员密码，至少 8 个字符 | 必填 | 部署时填写 |
 | `enable_postgres_storage` | 为 LibreDB Studio 服务端状态创建 PostgreSQL | 可选 | `false`（SQLite） |
+| `existing_database_type` | 要连接的现有 Sealos 数据库引擎：`none`、`postgresql`、`mysql`、`mongodb` 或 `redis` | 可选 | `none` |
+| `existing_database_name` | Sealos 数据库应用中显示的数据库名称 | 选择引擎时必填 | 部署时填写 |
 
 模板会自动生成应用名称、公网域名和 JWT 签名密钥。SQLite 数据保存在 `/app/data/libredb-storage.db`；PostgreSQL 模式会创建 `libredb_storage` 数据库，并通过 KubeBlocks 凭据 Secret 拼装连接地址。
+
+现有数据库连接在同一命名空间中读取以下 Secret 和地址，并默认打开表中列出的数据库：
+
+| 引擎 | Secret | 主机 | 端口 | 数据库 |
+| --- | --- | --- | --- | --- |
+| PostgreSQL | `<name>-conn-credential` | Secret 中的 `host` 键 | `5432` | `postgres` |
+| MySQL | `<name>-conn-credential` | Secret 中的 `host` 键 | `3306` | `mysql` |
+| MongoDB | `<name>-mongodb-account-root` | `<name>-mongodb` | `27017` | 不指定，在 `admin` 中认证 |
+| Redis | `<name>-redis-account-default` | `<name>-redis-redis` | `6379` | 不指定 |
+
+选择 `none` 时，模板不会创建 ConfigMap，也不会设置 `SEED_CONFIG_PATH`。LibreDB Studio 只显示内置示例连接，其他连接可在 Editor 中添加。
 
 ## 扩缩容
 
@@ -112,9 +131,17 @@ Sealos 将 Kubernetes 部署、网络、存储和可视化运维集中在同一�
 
 SQLite 模式应确认应用 PVC 已绑定并挂载到 `/app/data`。PostgreSQL 模式应确认集群健康，并且 `STORAGE_PROVIDER` 的值为 `postgres`。
 
+### 选择现有数据库后应用停留在 CreateContainerConfigError
+
+上表中的 Secret 在当前命名空间中不存在。请在 Sealos 数据库应用中核对数据库名称和引擎。旧版 Sealos 创建的 MongoDB 和 Redis 数据库将凭据保存在 `<name>-conn-credential` 中，此选项不支持这类数据库。请使用正确的值重新部署，或选择 `none` 后手动添加连接。
+
+### 连接列表中没有所选数据库
+
+请使用管理员账号登录：该连接只对管理员角色可见。如果仍然没有显示，请在 Canvas 中查看 LibreDB Studio 日志中与预置连接配置相关的记录。
+
 ### 数据库连接失败
 
-填写 Sealos 工作空间可访问的数据库主机名，核对端口和凭据，并选择目标数据库要求的 TLS 设置。
+填写 Sealos 工作空间可访问的数据库主机名，核对端口和凭据，并选择目标数据库要求的 TLS 设置。修改部署时所选数据库的密码后，请在 Canvas 中重启 LibreDB Studio 工作负载：它只在启动时从 Secret 读取密码。
 
 ### 获取帮助
 

@@ -47,6 +47,22 @@ spec:
       type: boolean
       default: 'false'
       required: false
+    existing_database_type:
+      description: 'Engine of an existing Sealos database in this workspace to open in LibreDB Studio at first login. Keep none to add connections by hand.'
+      type: choice
+      default: 'none'
+      required: false
+      options:
+        - none
+        - postgresql
+        - mysql
+        - mongodb
+        - redis
+    existing_database_name:
+      description: 'Name of the existing database exactly as the Sealos Database app shows it: lowercase letters, digits and hyphens.'
+      type: string
+      required: true
+      if: inputs.existing_database_type !== 'none'
 
 ---
 ${{ if(inputs.enable_postgres_storage === 'true') }}
@@ -215,6 +231,52 @@ ${{ else() }}
 ${{ endif() }}
 
 ---
+${{ if(inputs.existing_database_type !== 'none') }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${{ defaults.app_name }}
+  labels:
+    cloud.sealos.io/app-deploy-manager: ${{ defaults.app_name }}
+data:
+  vn-appvn-configvn-seedvn-connectionsvn-yaml: |
+    # LibreDB Studio seed connections. Only ${ENV} references live here;
+    # the values come from the database's KubeBlocks Secret at runtime.
+    version: "1"
+    connections:
+      - id: sealos-database
+        name: '${{ inputs.existing_database_name }} (Sealos)'
+        ${{ if(inputs.existing_database_type === 'postgresql') }}
+        type: postgres
+        host: "${EXISTING_DB_HOST}"
+        port: 5432
+        database: postgres
+        ${{ elif(inputs.existing_database_type === 'mysql') }}
+        type: mysql
+        host: "${EXISTING_DB_HOST}"
+        port: 3306
+        database: mysql
+        ${{ elif(inputs.existing_database_type === 'mongodb') }}
+        type: mongodb
+        host: ${{ inputs.existing_database_name }}-mongodb.${{ SEALOS_NAMESPACE }}.svc.cluster.local
+        port: 27017
+        authSource: admin
+        ${{ elif(inputs.existing_database_type === 'redis') }}
+        type: redis
+        host: ${{ inputs.existing_database_name }}-redis-redis.${{ SEALOS_NAMESPACE }}.svc.cluster.local
+        port: 6379
+        ${{ endif() }}
+        user: "${EXISTING_DB_USER}"
+        password: "${EXISTING_DB_PASSWORD}"
+        ssl:
+          mode: disable
+        roles: ["admin"]
+        managed: true
+${{ else() }}
+# No existing Sealos database selected: no seed connections are configured.
+${{ endif() }}
+
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -345,6 +407,49 @@ spec:
             - name: STORAGE_SQLITE_PATH
               value: /app/data/libredb-storage.db
             ${{ endif() }}
+            ${{ if(inputs.existing_database_type === 'postgresql' || inputs.existing_database_type === 'mysql') }}
+            - name: EXISTING_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-conn-credential
+                  key: host
+            - name: EXISTING_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-conn-credential
+                  key: username
+            - name: EXISTING_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-conn-credential
+                  key: password
+            ${{ elif(inputs.existing_database_type === 'mongodb') }}
+            - name: EXISTING_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-mongodb-account-root
+                  key: username
+            - name: EXISTING_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-mongodb-account-root
+                  key: password
+            ${{ elif(inputs.existing_database_type === 'redis') }}
+            - name: EXISTING_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-redis-account-default
+                  key: username
+            - name: EXISTING_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${{ inputs.existing_database_name }}-redis-account-default
+                  key: password
+            ${{ endif() }}
+            ${{ if(inputs.existing_database_type !== 'none') }}
+            - name: SEED_CONFIG_PATH
+              value: /app/config/seed-connections.yaml
+            ${{ endif() }}
           ports:
             - containerPort: 3000
               name: http
@@ -379,11 +484,29 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 3
             failureThreshold: 3
-          ${{ if(inputs.enable_postgres_storage === 'false') }}
+          ${{ if(inputs.enable_postgres_storage === 'false' || inputs.existing_database_type !== 'none') }}
           volumeMounts:
+          ${{ endif() }}
+          ${{ if(inputs.enable_postgres_storage === 'false') }}
             - name: vn-appvn-data
               mountPath: /app/data
           ${{ endif() }}
+          ${{ if(inputs.existing_database_type !== 'none') }}
+            - name: vn-appvn-configvn-seedvn-connectionsvn-yaml
+              mountPath: /app/config/seed-connections.yaml
+              subPath: ./app/config/seed-connections.yaml
+              readOnly: true
+          ${{ endif() }}
+      ${{ if(inputs.existing_database_type !== 'none') }}
+      volumes:
+        - name: vn-appvn-configvn-seedvn-connectionsvn-yaml
+          configMap:
+            name: ${{ defaults.app_name }}
+            items:
+              - key: vn-appvn-configvn-seedvn-connectionsvn-yaml
+                path: ./app/config/seed-connections.yaml
+            defaultMode: 420
+      ${{ endif() }}
   ${{ if(inputs.enable_postgres_storage === 'false') }}
   volumeClaimTemplates:
     - metadata:
